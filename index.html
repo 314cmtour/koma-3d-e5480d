@@ -1241,7 +1241,7 @@ function actTick(dt){ DOORS.forEach(function(d){ d.step(dt); }); padTick();
   if (actEl){ if (txt && mode=='walk'){ actEl.hidden=false; actEl.textContent=(isTouch?'':'E ： ')+txt; } else actEl.hidden=true; } }
 // 車を走らせる（前へ＋z が車の前）
 function driveStep(fw,st,dt){ var c=DRIVE, top=keys['shift']?16:11; c.v+=fw*(fw*c.v<0?9:4.5)*dt; if (!fw) c.v*=Math.max(0,1-dt*1.2); c.v=Math.max(-4,Math.min(top,c.v));
-  var dh=-st*c.v*dt*0.32; c.h+=dh; yaw+=dh;
+  c.st=st; var dh=-st*c.v*dt*0.32; c.h+=dh; yaw+=dh;
   var d=c.v*dt, n=Math.max(1,Math.ceil(Math.abs(d)/0.12)), fx=Math.sin(c.h), fz=Math.cos(c.h), rx=-fz, rz=fx, sg=c.v>=0?1:-1;
   for (var i=0;i<n;i++){ var x=c.g.position.x, z=c.g.position.z, nx=x+fx*d/n, nz=z+fz*d/n, hx=nx+fx*2.2*sg, hz=nz+fz*2.2*sg, g0=groundY(x,z), g1=groundY(nx,nz);
     if (blocked(hx+rx*0.8,hz+rz*0.8)||blocked(hx-rx*0.8,hz-rz*0.8)||blocked(hx,hz)||Math.abs(g1-g0)>0.25||Math.abs(groundY(hx,hz)-g1)>0.6){ c.v=0; break; }
@@ -1252,7 +1252,7 @@ function driveStep(fw,st,dt){ var c=DRIVE, top=keys['shift']?16:11; c.v+=fw*(fw*
   pos.set(c.g.position.x,c.g.position.y+EYE,c.g.position.z); }
 function driveCam(){ var c=DRIVE, fx=Math.sin(c.h), fz=Math.cos(c.h), rx=-fz, rz=fx;
   if (VIEW3){ var cp=Math.cos(pitch), dx=-Math.sin(yaw)*cp, dz=-Math.cos(yaw)*cp; camera.position.set(c.g.position.x+dx*7.5,c.g.position.y+2.6-Math.sin(pitch)*4,c.g.position.z+dz*7.5); camera.lookAt(c.g.position.x,c.g.position.y+1.0,c.g.position.z); }
-  else { var ex=c.g.position.x+rx*0.36-fx*0.15, ez=c.g.position.z+rz*0.36-fz*0.15, ey=c.g.position.y+1.18; camera.position.set(ex,ey,ez); camera.lookAt(ex+Math.sin(yaw)*Math.cos(pitch),ey+Math.sin(pitch),ez+Math.cos(yaw)*Math.cos(pitch)); }
+  else { var ex=c.g.position.x+rx*0.36-fx*0.42, ez=c.g.position.z+rz*0.36-fz*0.42, ey=c.g.position.y+1.16; camera.position.set(ex,ey,ez); camera.lookAt(ex+Math.sin(yaw)*Math.cos(pitch),ey+Math.sin(pitch),ez+Math.cos(yaw)*Math.cos(pitch)); }
   camera.up.set(0,1,0); }
 window.__dbg2={near:function(){ return nearest(); },doors:function(){ return DOORS; },act:function(){ return ACT; },cars:function(){ return window.__CARS; },seats:function(){ return seatList(); },doAct:function(){ doAct(); },st:function(){ return {sit:!!SIT,drive:!!DRIVE}; }};
 // ===== 左下のコントローラー（スティック＋ボタン）：スマホも Mac も（2026-11-24 CEO）=====
@@ -1930,6 +1930,56 @@ var TOUR_STOPS=[
   // ⑦ 最初の絵が出たら、読み込みの幕を閉じる
   var boot=gid('boot'); if (boot){ var bar=gid('bootBar'); if (bar) bar.style.width='92%';
     requestAnimationFrame(function(){ requestAnimationFrame(function(){ if (bar) bar.style.width='100%'; boot.classList.add('done'); setTimeout(function(){ boot.remove(); },700); }); }); }
+})();
+
+// 車に乗ったときの一人称＝運転席から、ハンドル・計器・ダッシュボード・柱・天井・ルームミラーが見える（2026-11-26 CEO）
+// 車の中の座標（前＝+z・右ハンドル＝運転席は x=-0.36・目の高さ 1.16・目は z=-0.42）。三人称のときと降りたときは隠す
+(function(){
+  if (!window.__CARS || !window.__CARS.length) return;
+  var E={envMapIntensity:0.12}, dash=cm(0x15171a,0.9,0,E), trim=cm(0x22252a,0.8,0,E), wheelM=cm(0x0c0c0d,0.6,0,E), roofM=cm(0xcfcac0,0.95,0,{envMapIntensity:0.3}), mirM=cm(0x9fb4c8,0.1,0.8,{envMapIntensity:0.6});   // 車内は暗く（周りの映り込みを弱く）
+  roofM.side=THREE.DoubleSide;
+  function bx(g,x,y,z,w,h,d,m){ var me=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m); me.position.set(x,y,z); g.add(me); return me; }
+  function bar(g,a,b,r,m){ var A=new THREE.Vector3().fromArray(a), B=new THREE.Vector3().fromArray(b), L=A.distanceTo(B), me=new THREE.Mesh(new THREE.CylinderGeometry(r,r,L,8),m);
+    me.position.copy(A).add(B).multiplyScalar(0.5); me.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),B.clone().sub(A).normalize()); g.add(me); return me; }
+  // 計器（速さを数字で）
+  function gauge(){ var cv=document.createElement('canvas'); cv.width=256; cv.height=128; var t=new THREE.CanvasTexture(cv); t.encoding=THREE.sRGBEncoding;
+    var me=new THREE.Mesh(new THREE.PlaneGeometry(0.30,0.15),new THREE.MeshBasicMaterial({map:t,toneMapped:false}));
+    me.userData.draw=function(kmh){ var g=cv.getContext('2d'); g.fillStyle='#0c0f14'; g.fillRect(0,0,256,128);
+      g.strokeStyle='#e8eef5'; g.lineWidth=5; g.beginPath(); g.arc(70,70,48,Math.PI*0.8,Math.PI*2.2); g.stroke();
+      var a=Math.PI*0.8+Math.PI*1.4*Math.min(1,kmh/60); g.strokeStyle='#ff5a3c'; g.lineWidth=4; g.beginPath(); g.moveTo(70,70); g.lineTo(70+Math.cos(a)*42,70+Math.sin(a)*42); g.stroke();
+      g.fillStyle='#e8eef5'; g.font='bold 54px sans-serif'; g.textAlign='right'; g.fillText(String(kmh),240,82); g.font='22px sans-serif'; g.fillText('km/h',240,112); t.needsUpdate=true; };
+    me.userData.draw(0); return me; }
+  window.__CARS.forEach(function(c){
+    var k=new THREE.Group(); k.visible=false; c.g.add(k); c.cock=k; var DX=-0.36;
+    bx(k,0,0.93,0.62,1.52,0.24,0.5,dash);                       // ダッシュボード
+    bx(k,0,1.055,0.80,1.50,0.03,0.22,trim);                     // ダッシュボードの上の面（前の窓の下）
+    bx(k,DX,1.08,0.50,0.46,0.07,0.24,dash);                     // 計器の上のひさし
+    var gm=gauge(); gm.position.set(DX,1.0,0.355); gm.rotation.y=Math.PI; k.add(gm); c.gauge=gm;   // 運転席から見える向き（-z を向く）
+    bx(k,0.30,0.93,0.36,0.26,0.10,0.02,trim);                   // 送風口
+    var fl=bx(k,0,0.915,-0.30,1.50,0.02,1.30,cm(0x08090a,1,0,{envMapIntensity:0.05})); fl.receiveShadow=true;   // 足元・座席のまわり（白い車体の上面を隠す）
+    bx(k,DX,0.98,-0.70,0.50,0.12,0.30,trim);                    // 運転席の座面の前の縁
+    bx(k,-0.04,0.90,0.40,0.18,0.20,0.04,trim);                  // まん中の操作盤
+    // ハンドル（少し上を前に倒す）
+    var sw=new THREE.Group(); sw.position.set(DX,0.98,0.20); sw.rotation.x=-0.42; k.add(sw);
+    var wh=new THREE.Group(); sw.add(wh); c.wheel=wh;
+    wh.add(new THREE.Mesh(new THREE.TorusGeometry(0.175,0.019,10,40),wheelM));
+    var hub=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.07,0.05,20),wheelM); hub.rotation.x=Math.PI/2; wh.add(hub);
+    bar(wh,[-0.17,-0.02,0],[0.17,-0.02,0],0.016,wheelM); bar(wh,[0,0,0],[0,-0.17,0],0.016,wheelM);
+    bar(k,[DX,0.95,0.24],[DX,0.88,0.52],0.035,dash);             // ハンドルの軸
+    // 前の柱（左右）・天井・ルームミラー・ドアの縁
+    bar(k,[ 0.74,1.0,0.95],[ 0.70,1.42,0.38],0.035,trim); bar(k,[-0.74,1.0,0.95],[-0.70,1.42,0.38],0.035,trim);
+    var roof=new THREE.Mesh(new THREE.PlaneGeometry(1.46,1.30),roofM); roof.rotation.x=Math.PI/2; roof.position.set(0,1.415,-0.28); roof.castShadow=true; k.add(roof);
+    bx(k,0,1.40,0.39,1.46,0.04,0.04,trim);                       // 天井の前の縁
+    bx(k,0,1.33,0.36,0.04,0.08,0.04,trim); bx(k,0,1.29,0.34,0.24,0.07,0.02,mirM);   // ルームミラー
+    bx(k, 0.77,0.96,-0.1,0.04,0.14,1.9,trim); bx(k,-0.77,0.96,-0.1,0.04,0.14,1.9,trim);   // ドアの縁
+    bar(k,[ 0.75,1.0,-0.95],[ 0.72,1.42,-0.85],0.03,trim); bar(k,[-0.75,1.0,-0.95],[-0.72,1.42,-0.85],0.03,trim);   // 後ろの柱
+    c.ang=0; c.kmh=-1;
+  });
+  (function loop(){ requestAnimationFrame(loop);
+    window.__CARS.forEach(function(c){ var on=(typeof DRIVE!=='undefined' && DRIVE===c && !(typeof VIEW3!=='undefined' && VIEW3)); if (c.cock.visible!==on) c.cock.visible=on; if (!on) return;
+      var tg=(c.st||0)*1.6;   /* 右へ切る＝運転席から見て時計回り */ c.ang+=(tg-c.ang)*0.18; c.wheel.rotation.z=c.ang;
+      var kmh=Math.round(Math.abs(c.v||0)*3.6); if (kmh!==c.kmh){ c.kmh=kmh; c.gauge.userData.draw(kmh); } }); })();
+  window.COCKPIT={ cars:window.__CARS, ride:function(i){ var c=window.__CARS[i||0]; if (mode!='walk') setMode('walk'); setPose({x:c.g.position.x/0.035278+600,y:-(c.g.position.z/0.035278)-180,yaw:0}); DRIVE=c; c.v=0; yaw=c.h; pitch=-0.08; return !!DRIVE; } };   // 確かめ用（乗る）
 })();
 
 window.__koma={ setPose:setPose, setMode:setMode, rooms:ROOMS, ed:{ items:function(){ return ITEMS; }, add:edAdd, toggle:edToggle, select:edSelect, rotate:edRotate, dup:edDup, del:edDelete, serial:serial, col:function(){ return dynCol.length; }, thumb:thumbOf, tdown:tileDown, tmove:tileMove, tup:tileUp, undo:edUndo, redo:edRedo, ustack:function(){ return [UNDO.length,REDO.length,ED.dirty]; } }  };
